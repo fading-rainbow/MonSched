@@ -1,0 +1,25 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="9dp" android:background="@drawable/agenda_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="32dp" android:orientation="horizontal">
+        <TextView android:id="@+id/agenda_today" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+            android:gravity="center" android:text="@string/agenda_today" android:textSize="13sp" android:textStyle="bold"
+            android:textColor="#FFFFFF" android:background="@drawable/agenda_tab_selected" android:contentDescription="@string/agenda_show_today" />
+        <TextView android:id="@+id/agenda_tomorrow" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+            android:layout_marginStart="4dp" android:gravity="center" android:text="@string/agenda_tomorrow" android:textSize="13sp" android:textStyle="bold"
+            android:textColor="#476555" android:background="@drawable/agenda_tab_unselected" android:contentDescription="@string/agenda_show_tomorrow" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="26dp" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/agenda_date" android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent"
+            android:gravity="center_vertical" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" android:textColor="#728077" />
+        <TextView android:id="@+id/agenda_refresh" android:layout_width="26dp" android:layout_height="match_parent" android:gravity="center"
+            android:text="@string/agenda_refresh_glyph" android:textSize="18sp" android:textColor="#476555" android:contentDescription="@string/agenda_refresh" />
+    </LinearLayout>
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <ListView android:id="@+id/agenda_list" android:layout_width="match_parent" android:layout_height="match_parent"
+            android:divider="@android:color/transparent" android:dividerHeight="6dp" android:scrollbars="vertical" android:clipToPadding="false" />
+        <TextView android:id="@+id/agenda_empty" android:layout_width="match_parent" android:layout_height="match_parent"
+            android:gravity="center" android:padding="6dp" android:textSize="12sp" android:textColor="#476555"
+            android:text="@string/agenda_loading" />
+    </FrameLayout>
+</LinearLayout>

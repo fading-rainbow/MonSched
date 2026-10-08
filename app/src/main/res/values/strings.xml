@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">MonSched</string>
+    <string name="widget_description">MonSched · 今日课程，点击打开完整课表</string>
+    <string name="widget_title">MonSched · 今日概览</string>
+    <string name="agenda_title">MonSched · 今天／明天 2×2</string>
+    <string name="agenda_description">2×2 可滚动课程卡片，切换今天和明天，今日下课后自动隐藏</string>
+    <string name="agenda_today">今天</string>
+    <string name="agenda_tomorrow">明天</string>
+    <string name="agenda_show_today">查看今天的剩余课程</string>
+    <string name="agenda_show_tomorrow">查看明天的全部课程</string>
+    <string name="agenda_refresh">刷新课程</string>
+    <string name="agenda_refresh_glyph" translatable="false">↻</string>
+    <string name="agenda_loading">正在加载课程…</string>
+</resources>
