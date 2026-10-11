@@ -252,7 +252,7 @@ fun placeCourses(courses: List<Course>): List<CoursePlacement> {
             }
         }
         TextButton(onClick = onDemo) { Text("创建示例课表，体验完整界面") }
-        Text("登录信息只用于学校页面。退出导入会清除登录会话，课表数据保存在本机；更新课表时重新登录即可。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("普通导入退出后清除登录会话。可在教务页面主动选择本机记住登录、每日同步，或在设置中管理；凭据不进入课表备份。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -270,7 +270,9 @@ fun placeCourses(courses: List<Course>): List<CoursePlacement> {
 @Composable fun SettingsScreen(table: Timetable, prefs: Preferences, timetableCount: Int,
     onUpdateTable: (Timetable) -> Unit, onPrefs: (Preferences) -> Unit, onSemester: () -> Unit,
     onSlots: () -> Unit, onReminders: (Boolean) -> Unit, onBackup: () -> Unit, onCsv: () -> Unit,
-    onCalendar: () -> Unit, onRestore: () -> Unit, onDeleteTable: () -> Unit, onPrivacy: () -> Unit) {
+    onCalendar: () -> Unit, onRestore: () -> Unit, onDeleteTable: () -> Unit, onPrivacy: () -> Unit,
+    syncConnection: cn.qingke.schedule.data.SyncConnection? = null, onSyncLogin: () -> Unit = {}, onSyncEnabled: (Boolean) -> Unit = {},
+    onSyncNow: () -> Unit = {}, onSyncForget: () -> Unit = {}, onSyncReview: () -> Unit = {}) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var preciseUpdates by remember { mutableStateOf(DayAgendaWidget.preciseUpdatesAllowed(context)) }
@@ -297,6 +299,9 @@ fun placeCourses(courses: List<Course>): List<CoursePlacement> {
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (mode, label) -> FilterChip(prefs.theme == mode, { onPrefs(prefs.copy(theme = mode)) }, label = { Text(label) }) }
             }
+        }
+        SettingsGroup("官方课表同步") {
+            SyncSettings(syncConnection, onSyncLogin, onSyncEnabled, onSyncNow, onSyncForget, onSyncReview)
         }
         SettingsGroup("上课提醒") {
             Row(Modifier.padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {

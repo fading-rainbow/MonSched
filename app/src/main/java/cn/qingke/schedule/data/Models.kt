@@ -36,12 +36,28 @@ data class Course(
     val endSection: Int = 2,
     val weeks: String = (1..20).joinToString(","),
     val color: Int = 0,
-    val note: String = ""
+    val note: String = "",
+    val syncSource: String = ""
 ) {
     fun weekSet(): Set<Int> = weeks.split(',').mapNotNull { it.toIntOrNull() }.toSet()
     fun occurs(week: Int): Boolean = week in weekSet()
     fun key(): String = listOf(name, teacher, room, weekday, startSection, endSection, weeks).joinToString("|")
 }
+
+@Entity(tableName = "sync_connections", foreignKeys = [ForeignKey(entity = Timetable::class,
+    parentColumns = ["id"], childColumns = ["timetableId"], onDelete = ForeignKey.CASCADE)])
+data class SyncConnection(
+    @PrimaryKey val timetableId: Long,
+    val sourceId: String,
+    val schoolName: String,
+    val enabled: Boolean = true,
+    val status: String = "ready",
+    val message: String = "已记住课表入口，等待每日同步",
+    val lastAttempt: Long = 0,
+    val lastSuccess: Long = 0,
+    val lastChanged: Long = 0,
+    val pendingSnapshot: String = ""
+)
 
 @Entity(tableName = "time_slots", primaryKeys = ["timetableId", "section"], foreignKeys = [ForeignKey(
     entity = Timetable::class, parentColumns = ["id"], childColumns = ["timetableId"], onDelete = ForeignKey.CASCADE)],

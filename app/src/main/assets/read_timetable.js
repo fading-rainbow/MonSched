@@ -15,6 +15,7 @@
     }
     walk(document, 0);
     const tables = [];
+    let pageDoc = document;
     docs.forEach(function (doc) {
         doc.querySelectorAll('table').forEach(function (table) {
             // Read course tables only; never extract login fields or the full document.
@@ -23,6 +24,7 @@
             const h = header ? (header.innerText || '') : '';
             const columnList = /课程名称|courseName|\bname\b/i.test(h) && /星期|weekday|\bday\b/i.test(h) && /周次|weeks/i.test(h) && /节次|开始节|sections|startSection|start_section/i.test(h);
             if ((t.indexOf('周') !== -1 && t.indexOf('节') !== -1) || table.id.indexOf('kbgrid') !== -1 || columnList) {
+                if (pageDoc === document) pageDoc = doc;
                 const copy = table.cloneNode(true);
                 copy.querySelectorAll('input,select,textarea,script,style').forEach(function (e) { e.remove(); });
                 tables.push(copy.outerHTML);
@@ -30,9 +32,21 @@
         });
     });
     const html = tables.join('\n');
+    const source = { pageUrl: pageDoc.location.href, controls: {}, year: '', term: '', structured: false };
+    const selectedDoc = docs.find(d => d.querySelector('#xnm') && d.querySelector('#xqm') && /kbcx/i.test(d.location.pathname));
+    if (selectedDoc) {
+        source.pageUrl = selectedDoc.location.href;
+        source.year = selectedDoc.querySelector('#xnm').value;
+        source.term = selectedDoc.querySelector('#xqm').value;
+    }
+    (selectedDoc || pageDoc).querySelectorAll('select').forEach(function (e) {
+        const key = e.id || e.name;
+        if (/^(xnm|xqm|xnxq|xq|year|term|semester|academicYear)$/i.test(key) && e.value.length <= 40) source.controls[key] = e.value;
+    });
     function finish(json) {
         if (window.__qingkeImportToken === token) {
-            window.__qingkeImportResult = JSON.stringify({ json: json || null, html: html });
+            source.structured = !!json;
+            window.__qingkeImportResult = JSON.stringify({ json: json || null, html: html, source: source });
         }
     }
     if (window.__qingkeImportSystem && window.__qingkeImportSystem !== 'zhengfang') { finish(null); return; }

@@ -10,6 +10,7 @@ import cn.qingke.schedule.R
 import cn.qingke.schedule.data.*
 import cn.qingke.schedule.widget.TodayWidget
 import cn.qingke.schedule.widget.DayAgendaWidget
+import cn.qingke.schedule.sync.SyncScheduler
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -105,7 +106,10 @@ class RescheduleReceiver : BroadcastReceiver() {
                 AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED, "cn.qingke.schedule.MIDNIGHT")) return
         val pending = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try { Reminders.schedule(context); TodayWidget.refresh(context); DayAgendaWidget.refresh(context) } finally { pending.finish() }
+            try {
+                Reminders.schedule(context); TodayWidget.refresh(context); DayAgendaWidget.refresh(context)
+                SyncScheduler.maintain(context, intent.action in setOf(Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED))
+            } finally { pending.finish() }
         }
     }
 }

@@ -227,11 +227,12 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
     }, confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } })
 }
 
-@Composable fun ImportPreview(result: ImportResult, table: Timetable, onDismiss: () -> Unit, onImport: (List<Course>, Boolean) -> Unit) {
+@Composable fun ImportPreview(result: ImportResult, table: Timetable, onDismiss: () -> Unit, onImport: (List<Course>, Boolean) -> Unit,
+    syncSetup: Boolean = false, busy: Boolean = false) {
     var selected by remember { mutableStateOf(result.courses.indices.toSet()) }
     var replace by remember { mutableStateOf(false) }
     LargeDialog("导入预览", onDismiss, confirm = {
-        Button(onClick = { onImport(result.courses.filterIndexed { i, _ -> i in selected }, replace) }, enabled = selected.isNotEmpty()) { Text("导入 ${selected.size} 个时段") }
+        Button(onClick = { onImport(result.courses.filterIndexed { i, _ -> i in selected }, replace) }, enabled = selected.isNotEmpty() && !busy) { Text(if (busy) "正在导入…" else "导入 ${selected.size} 个时段") }
     }) {
         Text("导入到「${table.name}」", style = MaterialTheme.typography.titleSmall)
         Text("第一周周一：${table.startDate}" + if (!table.startDateConfirmed) " · 尚未确认，请在学期设置中修改" else "",
@@ -239,6 +240,7 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
         Text("${result.source} · ${result.courses.map { it.name }.distinct().size} 门课程 · ${result.courses.size} 个时段",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("请核对周次、节次和教室，再确认保存。", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
+        if (syncSetup) Text("开启每日同步将绑定所选学期的全部官方课程。自建课程保留；旧版课程来源未知，可先备份再选择替换，避免重复。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         if (result.warnings.isNotEmpty()) {
             Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.fillMaxWidth().heightIn(max = 140.dp).verticalScroll(rememberScrollState()).padding(10.dp)) {
@@ -248,15 +250,15 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(selected.size == result.courses.size, { selected = if (it) result.courses.indices.toSet() else emptySet() })
+            Checkbox(selected.size == result.courses.size, { selected = if (it) result.courses.indices.toSet() else emptySet() }, enabled = !syncSetup && !busy)
             Text("全选", modifier = Modifier.weight(1f))
             Text("${selected.size}/${result.courses.size}", style = MaterialTheme.typography.labelSmall)
         }
         LazyColumn(Modifier.weight(1f, fill = false).heightIn(min = 80.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             itemsIndexed(result.courses) { i, c ->
                 Surface(color = courseColor(c.color).copy(alpha = .7f), shape = RoundedCornerShape(12.dp)) {
-                    Row(Modifier.fillMaxWidth().clickable { selected = if (i in selected) selected - i else selected + i }.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(i in selected, { selected = if (it) selected + i else selected - i })
+                    Row(Modifier.fillMaxWidth().clickable(enabled = !syncSetup && !busy) { selected = if (i in selected) selected - i else selected + i }.padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(i in selected, { selected = if (it) selected + i else selected - i }, enabled = !syncSetup && !busy)
                         Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
                             Text(c.name, fontWeight = FontWeight.SemiBold)
                             Text("周${Days[c.weekday - 1]} ${c.startSection}-${c.endSection}节 · ${WeekSpec.format(c.weekSet())}周", style = MaterialTheme.typography.bodySmall)
@@ -266,11 +268,11 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
                 }
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { replace = !replace }.padding(top = 8.dp)) {
-            Checkbox(replace, { replace = it })
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(enabled = !busy) { replace = !replace }.padding(top = 8.dp)) {
+            Checkbox(replace, { replace = it }, enabled = !busy)
             Column {
                 Text("替换当前课表的课程", style = MaterialTheme.typography.bodyMedium)
-                Text(if (replace) "确认后清除当前课表原有课程" else "当前为追加导入，自动跳过重复课程", style = MaterialTheme.typography.bodySmall,
+                Text(if (replace) "确认后清除当前课表原有课程" else if (syncSetup) "当前为追加导入，原课程保留，本次官方课程单独绑定" else "当前为追加导入，自动跳过重复课程", style = MaterialTheme.typography.bodySmall,
                     color = if (replace) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

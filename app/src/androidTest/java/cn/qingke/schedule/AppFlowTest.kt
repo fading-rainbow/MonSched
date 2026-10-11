@@ -62,7 +62,7 @@ class AppFlowTest {
         rule.onNodeWithText("设置", substring = false).activate()
         rule.onNodeWithText("课表设置").assertExists()
         rule.onNodeWithText("开发者 · MonHamed").performScrollTo().assertExists()
-        rule.onNodeWithText("MonSched 1.2.0").assertExists()
+        rule.onNodeWithText("MonSched ${BuildConfig.VERSION_NAME}").assertExists()
         rule.onNodeWithText("作息时间", substring = false).performScrollTo().activate()
         rule.onNodeWithText("初始时间仅为示例，请按学校实际作息修改。").assertExists()
         rule.onNodeWithText("取消", substring = false).activate()

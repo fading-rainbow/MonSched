@@ -16,6 +16,8 @@ class MainActivity : ComponentActivity() {
     private val model: AppViewModel by viewModels()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val syncTable = intent.getLongExtra("syncTableId", 0)
+        if (syncTable > 0) model.switch(syncTable)
         enableEdgeToEdge()
         setContent {
             val prefs = model.preferences.collectAsStateWithLifecycle().value

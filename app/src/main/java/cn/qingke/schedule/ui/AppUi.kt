@@ -26,6 +26,10 @@ import androidx.compose.ui.platform.LocalContext
 import cn.qingke.schedule.data.*
 import cn.qingke.schedule.importer.*
 import cn.qingke.schedule.exporter.*
+import cn.qingke.schedule.sync.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.*
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -42,7 +46,12 @@ import java.time.LocalDateTime
     val courses = loadedCourses.filter { it.timetableId == table?.id }
     val slots = loadedSlots.filter { it.timetableId == table?.id }
     val prefs by vm.preferences.collectAsStateWithLifecycle()
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(if ((context as? Activity)?.intent?.getBooleanExtra("openSync", false) == true) 3 else 0) }
+    val syncConnections by vm.syncConnections.collectAsStateWithLifecycle()
+    val syncConnection = syncConnections.firstOrNull { it.timetableId == table?.id }
+    var pendingSyncToken by rememberSaveable { mutableStateOf<String?>(null) }
+    var forgetSync by remember { mutableStateOf(false) }
+    var reviewSync by remember { mutableStateOf(false) }
     var week by rememberSaveable { mutableIntStateOf(1) }
     var weekTableId by rememberSaveable { mutableLongStateOf(-1) }
     var now by remember { mutableStateOf(LocalDateTime.now()) }
@@ -68,6 +77,12 @@ import java.time.LocalDateTime
     var allowHttpText by remember { mutableStateOf(false) }
     var deleteTable by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) scope.launch { SyncScheduler.maintain(context) } }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = LocalDateTime.now() } }
     LaunchedEffect(table?.id) { table?.let { if (weekTableId != it.id) { week = it.currentWeek().coerceIn(1, it.weekCount); weekTableId = it.id } } }
@@ -114,16 +129,37 @@ import java.time.LocalDateTime
         vm.setPreferences(vm.preferences.value.copy(reminder = granted))
         if (!granted) scope.launch { snackbar.showSnackbar("未获得通知权限，可在系统设置中开启") }
     }
+    val syncNotificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) scope.launch { snackbar.showSnackbar("同步仍可使用，登录失效和调课结果请在设置中查看") }
+    }
     val importWeb = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             busy = true
             scope.launch {
                 val file = File(context.cacheDir, "pending-import.json")
+                pendingSyncToken = result.data?.getStringExtra("syncToken")
                 try { preview = withContext(Dispatchers.IO) { CourseParser.parse(file.readText()) } }
                 catch (e: CancellationException) { throw e }
-                catch (e: Exception) { error = e.message ?: "课表读取失败" }
+                catch (e: Exception) {
+                    error = e.message ?: "课表读取失败"
+                    pendingSyncToken?.let { withContext(Dispatchers.IO) { SyncVault(context).delete(it) } }; pendingSyncToken = null
+                }
                 finally { file.delete(); busy = false }
             }
+        }
+    }
+    fun openSchool(configureSync: Boolean) {
+        val target = table ?: return
+        scope.launch {
+            val stored = if (configureSync && syncConnection != null) withContext(Dispatchers.IO) {
+                runCatching { SyncVault(context).load(syncConnection.sourceId) }.getOrNull()
+            } else null
+            val entry = stored?.loginUrl ?: prefs.schoolUrl
+            if (entry.isBlank()) { urlText = prefs.schoolUrl; schoolNameText = prefs.schoolName; schoolSystemText = prefs.schoolSystem; allowHttpText = prefs.allowHttp; urlDialog = true; return@launch }
+            importWeb.launch(Intent(context, WebImportActivity::class.java).putExtra("url", entry)
+                .putExtra("system", stored?.system ?: prefs.schoolSystem).putExtra("allowHttp", stored?.allowHttp ?: prefs.allowHttp)
+                .putExtra("timetableId", target.id).putExtra("configureSync", configureSync)
+                .putExtra("schoolName", if (stored != null) syncConnection?.schoolName else prefs.schoolName))
         }
     }
     val importFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -216,7 +252,7 @@ import java.time.LocalDateTime
                         0 -> WeekScreen(t, courses, slots, week, now, { week = it.coerceIn(1, t.weekCount) }, { chooseWeek = true }, { details = it },
                             { day, section -> add(day, section) }, { tab = 2 }, { imageFile.launch("MonSched-${t.name}-第${week}周.png") }, { semester = true })
                         1 -> TodayScreen(t, courses, slots, now, { details = it }, { add(now.dayOfWeek.value) }, { semester = true })
-                        2 -> ImportScreen(t, prefs, { importWeb.launch(Intent(context, WebImportActivity::class.java).putExtra("url", prefs.schoolUrl).putExtra("system", prefs.schoolSystem).putExtra("allowHttp", prefs.allowHttp)) },
+                        2 -> ImportScreen(t, prefs, { openSchool(false) },
                             { importFile.launch(arrayOf("*/*")) }, { templateFile.launch("MonSched导入模板.csv") },
                             { vm.createDemo { tab = 0 } }, { urlText = prefs.schoolUrl; schoolNameText = prefs.schoolName; schoolSystemText = prefs.schoolSystem; allowHttpText = prefs.allowHttp; urlDialog = true })
                         3 -> SettingsScreen(t, prefs, tables.size, vm::update, vm::setPreferences, { semester = true }, { editSlots = true },
@@ -225,7 +261,9 @@ import java.time.LocalDateTime
                                     notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                                 else vm.setPreferences(prefs.copy(reminder = enabled))
                             }, { backupFile.launch("MonSched备份-${LocalDate.now()}.json") }, { csvFile.launch("MonSched-${t.name}.csv") },
-                            { calendarFile.launch("MonSched-${t.name}.ics") }, { restoreFile.launch(arrayOf("*/*")) }, { deleteTable = true }, { privacy = true })
+                            { calendarFile.launch("MonSched-${t.name}.ics") }, { restoreFile.launch(arrayOf("*/*")) }, { deleteTable = true }, { privacy = true },
+                            syncConnection, { openSchool(true) }, { vm.setSyncEnabled(t.id, it) }, { vm.syncNow(t.id) },
+                            { forgetSync = true }, { reviewSync = true })
                     }
                 }
             }
@@ -241,7 +279,36 @@ import java.time.LocalDateTime
             { editor = c.copy(id = 0); details = null }, { vm.delete(c); details = null }) }
         if (semester) TimetableEditor(t, courses, { semester = false }, { vm.update(it); semester = false })
         if (editSlots) SlotsEditor(t, slots, { editSlots = false }, { vm.saveSlots(it); editSlots = false })
-        preview?.let { p -> ImportPreview(p, t, { preview = null }, { list, replace -> vm.importCourses(list, replace) { preview = null; tab = 0 } }) }
+        preview?.let { p -> ImportPreview(p, t, {
+            if (!busy) {
+                preview = null; val token = pendingSyncToken; pendingSyncToken = null
+                token?.let { scope.launch(Dispatchers.IO) { SyncVault(context).delete(it) } }
+            }
+        }, { list, replace ->
+            busy = true
+            val syncSetup = pendingSyncToken != null
+            vm.importCourses(list, replace, pendingSyncToken, onFailure = { busy = false }) {
+                busy = false; pendingSyncToken = null; preview = null; tab = 0
+                if (syncSetup && Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                    syncNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }, pendingSyncToken != null, busy) }
+        if (forgetSync) AlertDialog(onDismissRequest = { forgetSync = false }, title = { Text("清除记住的登录信息？") },
+            text = { Text("停止每日同步，删除本机加密保存的账号、密码和同步会话。现有课程保留为普通课程。") },
+            confirmButton = { TextButton(onClick = { vm.forgetSync(t.id); forgetSync = false }) { Text("清除并停止") } },
+            dismissButton = { TextButton(onClick = { forgetSync = false }) { Text("取消") } })
+        if (reviewSync && syncConnection != null) {
+            val pending = runCatching { SyncSnapshots.decode(syncConnection.pendingSnapshot) }.getOrNull()
+            val delta = pending?.let { SyncReconciler.plan(courses, it, syncConnection.sourceId, t.id) }
+            AlertDialog(onDismissRequest = { reviewSync = false }, title = { Text("确认官方课表变化") },
+                text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("本次读取 ${pending?.size ?: 0} 个官方时段。${delta?.summary.orEmpty()}。")
+                    Text(if (pending.isNullOrEmpty()) "官方返回空课表，请先确认学期和学校查询结果。应用后移除已绑定的官方课程，自建课程保留。"
+                        else "课程数量明显减少，请核对所选学期。应用后更新官方课程，自建课程保留。")
+                    pending?.take(5)?.forEach { Text("${it.name} · 周${it.weekday} 第 ${it.startSection}-${it.endSection} 节", style = MaterialTheme.typography.bodySmall) }
+                } }, confirmButton = { TextButton(onClick = { vm.approveSync(t.id); reviewSync = false }, enabled = pending != null && syncConnection.enabled) { Text("确认并应用") } },
+                dismissButton = { TextButton(onClick = { reviewSync = false }) { Text("暂不应用") } })
+        }
         if (deleteTable) AlertDialog(onDismissRequest = { deleteTable = false }, title = { Text("删除「${t.name}」？") },
             text = { Text("此课表的全部课程和设置会被删除。可先导出完整备份。") },
             confirmButton = { TextButton(onClick = { vm.deleteTimetable(t); deleteTable = false }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
@@ -277,7 +344,7 @@ import java.time.LocalDateTime
             } else error = "请填写学校名称和有效的官方网址；HTTP 入口需确认传输方式"
         }) { Text("保存") } }, dismissButton = { TextButton(onClick = { urlDialog = false }) { Text("取消") } })
     if (privacy) AlertDialog(onDismissRequest = { privacy = false }, title = { Text("MonSched · 隐私说明") }, text = {
-        Text("课程、学期设置和作息保存在手机私有数据库中。没有广告、统计 SDK，也不连接个人服务器。\n\n教务导入使用学校官方网页；MonSched 不额外保存账号密码。退出导入后清除 WebView 登录会话与缓存。学校 HTTP 入口的传输方式由学校提供，请使用可信网络。\n\n网络权限用于教务登录；通知权限用于你主动开启的上课提醒。“闹钟和提醒”权限仅用于桌面组件按下课时间准时更新，可选择授予。文件导入和导出由系统文件选择器授权，无需访问全部存储。\n\n卸载会删除本地数据，请先导出备份。")
+        Text("课程、学期设置和作息保存在手机私有数据库中。没有广告、统计 SDK，也不连接个人服务器。\n\n普通教务导入退出后清除网页会话。只有你主动开启每日同步，才将账号密码、同步会话与课表入口使用 Android Keystore 和 AES-GCM 加密保存在本机，不写入课表备份。可暂停或彻底清除记住的登录信息。\n\n自动填充仅限配置的同一官方入口，不绕过验证码或证书错误。HTTP 入口在网络传输时不加密，请使用可信网络。每日跨日后联网检查，系统后台限制可能延迟。\n\n通知用于主动开启的提醒与同步结果。“闹钟和提醒”权限用于组件准时更新。文件操作通过系统选择器授权。卸载会删除本地数据，请先导出课表备份。")
     }, confirmButton = { TextButton(onClick = { privacy = false }) { Text("知道了") } })
     error?.let { message -> AlertDialog(onDismissRequest = { error = null }, title = { Text("暂时无法完成") }, text = { Text(message) },
         confirmButton = { TextButton(onClick = { error = null }) { Text("知道了") } }) }
