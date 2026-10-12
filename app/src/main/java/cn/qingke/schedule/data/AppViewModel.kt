@@ -12,6 +12,7 @@ import cn.qingke.schedule.widget.DayAgendaWidget
 import cn.qingke.schedule.sync.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.withLock
 
 data class Preferences(val theme: String = "system", val reminder: Boolean = false, val leadMinutes: Int = 10,
     val schoolUrl: String = "", val schoolName: String = "", val schoolSystem: String = "zhengfang", val allowHttp: Boolean = false)
@@ -116,15 +117,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (profile != null) {
                 val existing = db.dao().courses(timetable.id)
                 val previousSource = oldConnection?.sourceId ?: profile.id
-                val delta = SyncReconciler.plan(existing, list, previousSource, timetable.id)
+                val delta = SyncReconciler.plan(existing, list, previousSource, timetable.id, adoptExactLegacy = true)
                 if (delta.removed.isNotEmpty()) db.dao().deleteCourseIds(delta.removed.map { it.id })
                 for (course in delta.updates) db.dao().saveCourse(course.copy(syncSource = profile.id))
                 added = delta.updates.size
                 db.dao().saveSyncConnection(SyncConnection(timetable.id, profile.id, profile.schoolName.ifBlank { preferences.value.schoolName },
                     lastAttempt = System.currentTimeMillis(), lastSuccess = System.currentTimeMillis(), message = "已绑定所选学期，每日跨日后自动检查"))
             } else {
-                val existing = db.dao().courses(timetable.id).map { it.key() }.toMutableSet()
-                val values = list.map { it.copy(id = 0, timetableId = timetable.id, syncSource = "") }.filter { existing.add(it.key()) }
+                val existing = db.dao().courses(timetable.id).map { it.identity() }.toMutableSet()
+                val values = list.map { it.copy(id = 0, timetableId = timetable.id, syncSource = "") }.filter { existing.add(it.identity()) }
                 if (values.isNotEmpty()) db.dao().insertCourses(values)
                 added = values.size
                 if (replace) oldConnection?.let { db.dao().saveSyncConnection(it.copy(enabled = false, status = "paused", message = "完整替换课表后已暂停同步")) }
@@ -150,6 +151,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (enabled) db.dao().syncConnection(tableId)?.let { SyncScheduler.next(getApplication(), it); SyncScheduler.now(getApplication(), it) }
             else SyncScheduler.cancel(getApplication(), value.sourceId)
         } finally { SyncCoordinator.mutations.unlock() }
+    }
+    fun mergeDuplicates(tableId: Long, onFailure: () -> Unit = {}, onDone: () -> Unit) = launchSafe(onError = onFailure) {
+        val count = SyncCoordinator.mutations.withLock {
+            db.withTransaction {
+                val plan = CourseDuplicates.plan(db.dao().courses(tableId))
+                if (plan.removedIds.isNotEmpty()) db.dao().deleteCourseIds(plan.removedIds)
+                plan.updates.forEach { db.dao().saveCourse(it) }
+                plan.removedCount
+            }
+        }
+        changed(); messages.emit("已合并 $count 条重复记录，备注和同步绑定保留"); onDone()
     }
     fun syncNow(tableId: Long) = launchSafe {
         val connection = db.dao().syncConnection(tableId) ?: return@launchSafe

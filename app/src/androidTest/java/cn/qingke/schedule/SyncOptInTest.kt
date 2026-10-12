@@ -100,6 +100,12 @@ class SyncOptInTest {
             val file = File(context.cacheDir, "pending-import.json")
             val parsed = CourseParser.parse(file.readText())
             assertFalse(file.readText().contains("SYNTHETIC_PASSWORD"))
+            // An old user already has the same official course, plus a personal course.
+            runBlocking {
+                dao.insertCourses(listOf(parsed.courses.single().copy(timetableId = id, note = "旧课表笔记", color = 5),
+                    Course(timetableId = id, name = "自建自习", note = "必须保留")))
+            }
+            val legacyId = runBlocking { dao.courses(id).single { it.name != "自建自习" }.id }
             val model = AppViewModel(context.applicationContext as Application)
             store.put("sync-confirmation", model)
             instrumentation.runOnMainSync { model.switch(id) }
@@ -110,9 +116,26 @@ class SyncOptInTest {
             runBlocking {
                 val connection = dao.syncConnection(id)!!
                 assertTrue(connection.enabled); assertEquals(token, connection.sourceId)
-                assertEquals(token, dao.courses(id).single().syncSource)
+                val courses = dao.courses(id)
+                assertEquals(2, courses.size)
+                val bound = courses.single { it.name != "自建自习" }
+                assertEquals(token, bound.syncSource); assertEquals(legacyId, bound.id)
+                assertEquals("旧课表笔记", bound.note); assertEquals(5, bound.color)
+                assertEquals("必须保留", courses.single { it.name == "自建自习" }.note)
             }
             assertFalse(vault.load(token)!!.pending)
+            val again = profile.copy(id = java.util.UUID.randomUUID().toString(), pending = true)
+            vault.save(again)
+            val importedAgain = CountDownLatch(1)
+            instrumentation.runOnMainSync { model.importCourses(parsed.courses, false, again.id) { importedAgain.countDown() } }
+            assertTrue(importedAgain.await(120, TimeUnit.SECONDS))
+            runBlocking {
+                assertEquals(2, dao.courses(id).size)
+                val bound = dao.courses(id).single { it.name != "自建自习" }
+                assertEquals(legacyId, bound.id); assertEquals(again.id, bound.syncSource)
+                assertEquals("旧课表笔记", bound.note)
+            }
+            assertNull(vault.load(token))
         } finally {
             runBlocking { SyncCoordinator.forget(context, id); dao.timetables().firstOrNull { it.id == id }?.let { dao.deleteTimetable(it) } }
             vault.delete(token); File(context.cacheDir, "pending-import.json").delete()

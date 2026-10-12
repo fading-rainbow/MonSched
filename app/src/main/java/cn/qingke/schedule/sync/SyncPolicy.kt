@@ -1,6 +1,6 @@
 package cn.qingke.schedule.sync
 
-import cn.qingke.schedule.data.Course
+import cn.qingke.schedule.data.*
 import java.net.URI
 import java.time.*
 
@@ -24,23 +24,34 @@ data class SyncDelta(val updates: List<Course>, val removed: List<Course>, val a
 }
 
 object SyncReconciler {
-    fun plan(local: List<Course>, official: List<Course>, source: String, timetableId: Long): SyncDelta {
+    fun plan(local: List<Course>, official: List<Course>, source: String, timetableId: Long,
+        adoptExactLegacy: Boolean = false): SyncDelta {
         require(source.isNotBlank())
-        val remaining = local.filter { it.syncSource == source }.toMutableList()
-        val oldCount = remaining.size
+        val remaining = local.filter { it.timetableId == timetableId && it.syncSource == source }.toMutableList()
+        val legacy = if (adoptExactLegacy) local.filter { it.timetableId == timetableId && it.syncSource.isBlank() }.toMutableList() else mutableListOf()
+        val remoteCourses = official.distinctBy { it.identity() }
+        val reserved = remoteCourses.map { it.identity() }.toSet()
+        val removedDuplicates = mutableListOf<Course>()
+        val oldCount = remaining.distinctBy { it.identity() }.size
         var added = 0; var changed = 0
-        val updates = official.distinctBy { it.key() }.map { remote ->
-            val exact = remaining.firstOrNull { it.key() == remote.key() }
-            val old = exact ?: remaining.filter { it.name == remote.name && it.teacher == remote.teacher }
+        val updates = remoteCourses.map { remote ->
+            val exacts = remaining.filter { it.identity() == remote.identity() } + legacy.filter { it.identity() == remote.identity() }
+            val exact = exacts.takeIf { it.isNotEmpty() }?.let(CourseDuplicates::merge)
+            val old = exact ?: remaining.filter { it.name == remote.name && it.teacher == remote.teacher && it.identity() !in reserved }
                 .maxByOrNull { c -> (if (c.weekday == remote.weekday) 8 else 0) +
                     (if (c.startSection == remote.startSection) 4 else 0) +
                     (if (c.room == remote.room) 2 else 0) + (if (c.weeks == remote.weeks) 1 else 0) }
-            if (old == null) added++ else { remaining.remove(old); if (exact == null) changed++ }
+            if (old == null) added++ else {
+                if (exact != null) {
+                    remaining.removeAll(exacts.toSet()); legacy.removeAll(exacts.toSet())
+                    removedDuplicates += exacts.filter { it.id != old.id }
+                } else { remaining.remove(old); changed++ }
+            }
             remote.copy(id = old?.id ?: 0, timetableId = timetableId, syncSource = source,
                 color = old?.color ?: remote.color, note = old?.note ?: remote.note)
         }
         // An empty response or a sudden drop needs a person to verify the term / school result.
         val review = updates.isEmpty() || oldCount >= 4 && updates.size * 2 < oldCount
-        return SyncDelta(updates, remaining, added, changed, review)
+        return SyncDelta(updates, remaining + removedDuplicates, added, changed, review)
     }
 }

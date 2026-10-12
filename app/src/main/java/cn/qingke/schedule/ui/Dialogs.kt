@@ -6,6 +6,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -18,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -183,9 +186,13 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
     }
 }
 
-@Composable fun SlotsEditor(table: Timetable, existing: List<TimeSlot>, onDismiss: () -> Unit, onSave: (List<TimeSlot>) -> Unit) {
+@Composable fun SlotsEditor(table: Timetable, existing: List<TimeSlot>, onDismiss: () -> Unit, onSave: (List<TimeSlot>) -> Unit, initialSection: Int = 1) {
     val context = LocalContext.current
-    var slots by remember { mutableStateOf(SchoolTimes.defaults(table.id).map { fallback -> existing.firstOrNull { it.timetableId == table.id && it.section == fallback.section } ?: fallback }.take(table.sectionCount)) }
+    val defaults = SchoolTimes.defaults(table.id)
+    var slots by remember(table.id) { mutableStateOf((1..table.sectionCount).map { section ->
+        existing.firstOrNull { it.timetableId == table.id && it.section == section } ?: defaults.firstOrNull { it.section == section } ?: TimeSlot(table.id, section, "", "")
+    }) }
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = (initialSection - 1).coerceIn(0, slots.lastIndex))
     var error by remember { mutableStateOf<String?>(null) }
     LargeDialog("作息时间", onDismiss, confirm = { Button(onClick = {
         try {
@@ -195,25 +202,26 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
         } catch (e: Exception) { error = e.message }
     }) { Text("保存作息") } }) {
         Text("初始时间仅为示例，请按学校实际作息修改。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(top = 10.dp)) {
-            slots.forEachIndexed { index, slot ->
+        Text("仅修改「${table.name}」。点击开始或结束时间编辑，保存后同步更新课表左侧、今日课程、提醒和桌面组件。", style = MaterialTheme.typography.bodySmall)
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        LazyColumn(Modifier.weight(1f, fill = false).heightIn(min = 80.dp).padding(top = 10.dp), state = listState) {
+            itemsIndexed(slots, key = { _, slot -> slot.section }) { index, slot ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("第 ${slot.section} 节", style = MaterialTheme.typography.bodyMedium)
                     fun pick(start: Boolean) {
-                        val value = LocalTime.parse(if (start) slot.start else slot.end)
+                        val value = runCatching { LocalTime.parse(if (start) slot.start else slot.end) }.getOrDefault(LocalTime.of(8, if (start) 0 else 45))
                         TimePickerDialog(context, { _, h, m ->
                             val time = LocalTime.of(h, m).toString()
                             slots = slots.toMutableList().also { it[index] = if (start) slot.copy(start = time) else slot.copy(end = time) }
                         }, value.hour, value.minute, true).show()
                     }
-                    TextButton(onClick = { pick(true) }) { Text(slot.start) }
+                    TextButton(onClick = { pick(true) }, modifier = Modifier.semantics { contentDescription = "第${slot.section}节开始时间" }) { Text(slot.start.ifBlank { "设置开始" }) }
                     Text("—", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { pick(false) }) { Text(slot.end) }
+                    TextButton(onClick = { pick(false) }, modifier = Modifier.semantics { contentDescription = "第${slot.section}节结束时间" }) { Text(slot.end.ifBlank { "设置结束" }) }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .35f))
             }
-            TextButton(onClick = { slots = SchoolTimes.defaults(table.id).take(table.sectionCount) }) { Text("重置为示例作息") }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            item { TextButton(onClick = { slots = (1..table.sectionCount).map { section -> defaults.firstOrNull { it.section == section } ?: TimeSlot(table.id, section, "", "") } }) { Text("重置为示例作息") } }
         }
     }
 }
@@ -228,7 +236,7 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
 }
 
 @Composable fun ImportPreview(result: ImportResult, table: Timetable, onDismiss: () -> Unit, onImport: (List<Course>, Boolean) -> Unit,
-    syncSetup: Boolean = false, busy: Boolean = false) {
+    syncSetup: Boolean = false, busy: Boolean = false, existing: List<Course> = emptyList()) {
     var selected by remember { mutableStateOf(result.courses.indices.toSet()) }
     var replace by remember { mutableStateOf(false) }
     LargeDialog("导入预览", onDismiss, confirm = {
@@ -240,7 +248,13 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
         Text("${result.source} · ${result.courses.map { it.name }.distinct().size} 门课程 · ${result.courses.size} 个时段",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("请核对周次、节次和教室，再确认保存。", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
-        if (syncSetup) Text("开启每日同步将绑定所选学期的全部官方课程。自建课程保留；旧版课程来源未知，可先备份再选择替换，避免重复。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        val incoming = result.courses.filterIndexed { i, _ -> i in selected }.distinctBy { it.identity() }
+        val reused = incoming.count { c -> existing.any { it.identity() == c.identity() } }
+        if (syncSetup) Text("开启同步会复用完全一致的旧课程，并保留原备注、颜色和课程记录。其余自建课程保留。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        if (!replace && reused > 0) Text(if (syncSetup) "$reused 个时段与旧课表一致，将复用并纳入官方同步" else "$reused 个已存在时段将跳过，不重复添加", style = MaterialTheme.typography.bodySmall)
+        val existingOther = existing.filter { old -> (!syncSetup || old.syncSource.isBlank()) && incoming.none { it.identity() == old.identity() } }
+        val conflicts = incoming.count { c -> existingOther.any { CourseDuplicates.overlaps(c, it) } || incoming.any { it.identity() != c.identity() && CourseDuplicates.overlaps(c, it) } }
+        if (!replace && conflicts > 0) Text("$conflicts 个时段与不同课程在同周重叠，请核对；保存后会并排显示，不会当作重复删除。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         if (result.warnings.isNotEmpty()) {
             Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(12.dp)) {
                 Column(Modifier.fillMaxWidth().heightIn(max = 140.dp).verticalScroll(rememberScrollState()).padding(10.dp)) {
@@ -272,8 +286,32 @@ val Days = listOf("一", "二", "三", "四", "五", "六", "日")
             Checkbox(replace, { replace = it }, enabled = !busy)
             Column {
                 Text("替换当前课表的课程", style = MaterialTheme.typography.bodyMedium)
-                Text(if (replace) "确认后清除当前课表原有课程" else if (syncSetup) "当前为追加导入，原课程保留，本次官方课程单独绑定" else "当前为追加导入，自动跳过重复课程", style = MaterialTheme.typography.bodySmall,
+                Text(if (replace) "确认后清除当前课表原有课程" else if (syncSetup) "当前为合并导入，相同旧记录复用，其余课程保留" else "当前为追加导入，自动跳过重复课程", style = MaterialTheme.typography.bodySmall,
                     color = if (replace) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable fun DuplicateCoursesDialog(table: Timetable, plan: DuplicatePlan, busy: Boolean,
+    onDismiss: () -> Unit, onMerge: () -> Unit) {
+    LargeDialog("整理重复课程", onDismiss, confirm = {
+        Button(onClick = onMerge, enabled = plan.removedCount > 0 && !busy) { Text(if (busy) "正在整理…" else "合并 ${plan.removedCount} 条重复记录") }
+    }) {
+        Text("「${table.name}」中有 ${plan.groups.size} 组完全一致的课程。保留原记录和颜色，合并不同备注，已有同步绑定保留。", style = MaterialTheme.typography.bodySmall)
+        Text("只合并课程名称、教师、教室、星期、节次和周次一致的记录。不同课程或不同周次的重叠保留。", style = MaterialTheme.typography.bodySmall)
+        if (plan.groups.isEmpty()) Text("暂无完全重复的课程", modifier = Modifier.padding(vertical = 18.dp))
+        else LazyColumn(Modifier.weight(1f, fill = false).heightIn(min = 80.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(plan.groups) { _, group ->
+                val c = CourseDuplicates.merge(group)
+                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                        Text("${c.name} · ${group.size} 条 → 1 条", fontWeight = FontWeight.SemiBold)
+                        Text("周${Days[c.weekday - 1]} ${c.startSection}-${c.endSection}节 · ${WeekSpec.format(c.weekSet())}周", style = MaterialTheme.typography.bodySmall)
+                        Text(listOf(c.teacher, c.room).filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                        if (c.note.isNotBlank()) Text("保留备注：${c.note}", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
             }
         }
     }

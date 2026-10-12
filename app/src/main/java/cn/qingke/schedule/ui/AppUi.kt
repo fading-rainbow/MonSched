@@ -62,6 +62,8 @@ import java.time.LocalDateTime
     var tableName by remember { mutableStateOf("") }
     var semester by remember { mutableStateOf(false) }
     var editSlots by remember { mutableStateOf(false) }
+    var slotSection by remember { mutableIntStateOf(1) }
+    var duplicatePlan by remember { mutableStateOf<DuplicatePlan?>(null) }
     var editor by remember { mutableStateOf<Course?>(null) }
     var details by remember { mutableStateOf<Course?>(null) }
     var preview by remember { mutableStateOf<ImportResult?>(null) }
@@ -93,6 +95,7 @@ import java.time.LocalDateTime
         table?.let { t -> editor = Course(timetableId = t.id, name = "", weekday = day, startSection = section,
             endSection = (section + 1).coerceAtMost(t.sectionCount), weeks = (1..t.weekCount).joinToString(",")) }
     }
+    fun openSlots(section: Int = 1) { slotSection = section; editSlots = true }
     fun write(uri: Uri?, produce: suspend () -> ByteArray) {
         if (uri == null) return
         busy = true
@@ -232,6 +235,8 @@ import java.time.LocalDateTime
                     DropdownMenuItem(text = { Text("导出第 $week 周图片") }, onClick = { moreMenu = false; imageFile.launch("MonSched-${t?.name}-第${week}周.png") })
                     DropdownMenuItem(text = { Text("导出完整备份") }, onClick = { moreMenu = false; backupFile.launch("MonSched备份-${LocalDate.now()}.json") })
                     DropdownMenuItem(text = { Text("学期设置") }, onClick = { moreMenu = false; semester = true })
+                    DropdownMenuItem(text = { Text("自定义上课时间") }, onClick = { moreMenu = false; openSlots() })
+                    DropdownMenuItem(text = { Text("整理重复课程") }, onClick = { moreMenu = false; duplicatePlan = CourseDuplicates.plan(courses) })
                 }
             }
         } },
@@ -250,12 +255,13 @@ import java.time.LocalDateTime
                     }
                     when (tab) {
                         0 -> WeekScreen(t, courses, slots, week, now, { week = it.coerceIn(1, t.weekCount) }, { chooseWeek = true }, { details = it },
-                            { day, section -> add(day, section) }, { tab = 2 }, { imageFile.launch("MonSched-${t.name}-第${week}周.png") }, { semester = true })
+                            { day, section -> add(day, section) }, { tab = 2 }, { imageFile.launch("MonSched-${t.name}-第${week}周.png") }, { semester = true },
+                            { section -> openSlots(section) }, { duplicatePlan = CourseDuplicates.plan(courses) })
                         1 -> TodayScreen(t, courses, slots, now, { details = it }, { add(now.dayOfWeek.value) }, { semester = true })
                         2 -> ImportScreen(t, prefs, { openSchool(false) },
                             { importFile.launch(arrayOf("*/*")) }, { templateFile.launch("MonSched导入模板.csv") },
                             { vm.createDemo { tab = 0 } }, { urlText = prefs.schoolUrl; schoolNameText = prefs.schoolName; schoolSystemText = prefs.schoolSystem; allowHttpText = prefs.allowHttp; urlDialog = true })
-                        3 -> SettingsScreen(t, prefs, tables.size, vm::update, vm::setPreferences, { semester = true }, { editSlots = true },
+                        3 -> SettingsScreen(t, prefs, tables.size, vm::update, vm::setPreferences, { semester = true }, { openSlots() },
                             { enabled ->
                                 if (enabled && Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                                     notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -278,7 +284,12 @@ import java.time.LocalDateTime
         details?.let { c -> CourseDetails(c, slots, { details = null }, { editor = c; details = null },
             { editor = c.copy(id = 0); details = null }, { vm.delete(c); details = null }) }
         if (semester) TimetableEditor(t, courses, { semester = false }, { vm.update(it); semester = false })
-        if (editSlots) SlotsEditor(t, slots, { editSlots = false }, { vm.saveSlots(it); editSlots = false })
+        if (editSlots) SlotsEditor(t, slots, { editSlots = false }, { vm.saveSlots(it); editSlots = false }, slotSection)
+        duplicatePlan?.let { plan -> DuplicateCoursesDialog(t, plan, busy, { if (!busy) duplicatePlan = null }, {
+            busy = true
+            val target = plan.groups.firstOrNull()?.firstOrNull()?.timetableId ?: t.id
+            vm.mergeDuplicates(target, onFailure = { busy = false }) { busy = false; duplicatePlan = null }
+        }) }
         preview?.let { p -> ImportPreview(p, t, {
             if (!busy) {
                 preview = null; val token = pendingSyncToken; pendingSyncToken = null
@@ -292,7 +303,7 @@ import java.time.LocalDateTime
                 if (syncSetup && Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                     syncNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
-        }, pendingSyncToken != null, busy) }
+        }, pendingSyncToken != null, busy, if (pendingSyncToken != null) courses.filter { it.syncSource.isBlank() || it.syncSource == syncConnection?.sourceId } else courses) }
         if (forgetSync) AlertDialog(onDismissRequest = { forgetSync = false }, title = { Text("清除记住的登录信息？") },
             text = { Text("停止每日同步，删除本机加密保存的账号、密码和同步会话。现有课程保留为普通课程。") },
             confirmButton = { TextButton(onClick = { vm.forgetSync(t.id); forgetSync = false }) { Text("清除并停止") } },

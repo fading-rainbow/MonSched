@@ -40,7 +40,8 @@ import kotlin.math.abs
 
 @Composable fun WeekScreen(table: Timetable, courses: List<Course>, slots: List<TimeSlot>, week: Int,
     now: LocalDateTime, onWeek: (Int) -> Unit, onChoose: () -> Unit, onCourse: (Course) -> Unit,
-    onAdd: (Int, Int) -> Unit, onImport: () -> Unit, onExport: () -> Unit, onSemester: () -> Unit) {
+    onAdd: (Int, Int) -> Unit, onImport: () -> Unit, onExport: () -> Unit, onSemester: () -> Unit,
+    onSlots: (Int) -> Unit = {}, onDuplicates: () -> Unit = {}) {
     val current = table.currentWeek(now.toLocalDate())
     val monday = table.monday(week)
     Column(Modifier.fillMaxSize()) {
@@ -54,8 +55,16 @@ import kotlin.math.abs
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (week != current && current in 1..table.weekCount) TextButton(onClick = { onWeek(current) }) { Text("本周") }
+            IconButton(onClick = { onSlots(1) }) { Icon(Icons.Outlined.Schedule, "自定义上课时间") }
             IconButton(onClick = { onWeek(week - 1) }, enabled = week > 1) { Icon(Icons.Outlined.ChevronLeft, "上一周") }
             IconButton(onClick = { onWeek(week + 1) }, enabled = week < table.weekCount) { Icon(Icons.Outlined.ChevronRight, "下一周") }
+        }
+        val duplicates = CourseDuplicates.plan(courses).removedCount
+        if (duplicates > 0) Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Row(Modifier.fillMaxWidth().clickable(onClick = onDuplicates).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("发现 $duplicates 条完全重复记录 · 点此整理", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null, Modifier.size(18.dp))
+            }
         }
         if (!table.startDateConfirmed || current !in 1..table.weekCount) {
             Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -74,7 +83,7 @@ import kotlin.math.abs
             val hiddenWeekend = !table.showWeekend && courses.any { it.weekday > 5 && it.occurs(week) }
             if (hiddenWeekend) Text("本周还有周末课程，可在设置中显示", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-            WeekGrid(table, displayed, slots, week, now.toLocalDate(), onCourse, onAdd, onWeek)
+            WeekGrid(table, displayed, slots, week, now.toLocalDate(), onCourse, onAdd, onWeek, onSlots)
         }
     }
 }
@@ -112,7 +121,7 @@ fun placeCourses(courses: List<Course>): List<CoursePlacement> {
 }
 
 @Composable private fun ColumnScope.WeekGrid(table: Timetable, courses: List<Course>, slots: List<TimeSlot>, week: Int,
-    today: LocalDate, onCourse: (Course) -> Unit, onAdd: (Int, Int) -> Unit, onWeek: (Int) -> Unit) {
+    today: LocalDate, onCourse: (Course) -> Unit, onAdd: (Int, Int) -> Unit, onWeek: (Int) -> Unit, onSlots: (Int) -> Unit) {
     val days = if (table.showWeekend) 7 else 5
     val gutter = 36.dp
     val rowHeight = 58.dp
@@ -141,7 +150,8 @@ fun placeCourses(courses: List<Course>): List<CoursePlacement> {
             Box(Modifier.fillMaxWidth().height(rowHeight * table.sectionCount)) {
                 (1..table.sectionCount).forEach { s ->
                     Row(Modifier.offset(y = rowHeight * (s - 1)).height(rowHeight).fillMaxWidth()) {
-                        Column(Modifier.width(gutter).fillMaxHeight().padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(Modifier.width(gutter).fillMaxHeight().clickable { onSlots(s) }
+                            .semantics { contentDescription = "设置第${s}节作息时间" }.padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("$s", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                             val slot = slots.firstOrNull { it.section == s }
                             Text(slot?.start.orEmpty(), fontSize = 8.sp, lineHeight = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
